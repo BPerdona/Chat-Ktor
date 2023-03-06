@@ -1,6 +1,6 @@
 package com.example.plugins
 
-import com.example.Connection
+import com.example.model.Connection
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
@@ -28,14 +28,27 @@ fun Application.configureSockets() {
 
                 for (frame in incoming){
                     frame as? Frame.Text ?: continue
-                    if (frame.hasCommands()){
-                        send(handleCommand(frame.readText(), thisConnection))
-                        continue
-                    }
-                    val receivedText = frame.readText()
-                    val textWithUsername = "[${thisConnection.name}]: $receivedText"
-                    connections.forEach{
-                        it.session.send(textWithUsername)
+                    val incomingMessage = frame.readText()
+
+                    val type = if(frame.hasCommands())
+                        handleNewMessage(incomingMessage, thisConnection)
+                    else
+                        MessageType.CommonMessage(incomingMessage)
+
+                    when(type){
+                        is MessageType.Info -> send(type.message)
+                        is MessageType.CommonMessage -> {
+                            connections.forEach {
+                                it.session.send("[${thisConnection.name}]: ${type.message}")
+                            }
+                        }
+                        is MessageType.Whisper -> {
+                            val receiver = connections.find {
+                                it.name == type.receiver
+                            }
+                            receiver?.session?.send("[Whisper - ${thisConnection.name}]: ${type.message}")
+                            send("[Whisper - ${thisConnection.name}]: ${type.message}")
+                        }
                     }
                 }
             }catch (e: Exception){
@@ -48,21 +61,34 @@ fun Application.configureSockets() {
     }
 }
 
-private fun handleCommand(message: String, connection: Connection): String{
-    val command = message.substringBefore(" ").substring(1)
-    return when(command){
-        "commands" ->{
+private fun handleNewMessage(message: String, connection: Connection): MessageType{
+    return when(message.substringBefore(" ").substring(1)){
+        "commands" ->MessageType.Info(
             "All Commands:\n" +
-                    "/commands -> Return All Commands\n" +
-                    "/changeName yourname -> Change you chat name\n" +
-                    "/whisper username message -> Send a message to that specific user"
-        }
+            "/commands -> Return All Commands\n" +
+            "/changeName yourname -> Change you chat name\n" +
+            "/whisper username message -> Send a message to that specific user")
         "changeName" ->{
-            val newName = message.split(" ")[1]
-            connection.setUserName(newName)
-            "Username changed to $newName"
+            val paramsList = message.split(" ")
+            if (paramsList.size<=1){
+                MessageType.Info("Error!")
+            }
+            else{
+                connection.setUserName(paramsList[1])
+                MessageType.Info("Username changed to ${paramsList[1]}")
+            }
         }
-        else -> "Unknown command!"
+        "whisper" ->{
+            val paramsList = message.split(" ")
+            if(paramsList.size<=2){
+                MessageType.Info("Error! No Message or User found")
+            }else{
+                val user = paramsList[1]
+                val receiverMessage = message.substringAfter(paramsList[1])
+                MessageType.Whisper(receiverMessage, user)
+            }
+        }
+        else -> MessageType.Info("Unknown Command")
     }
 }
 
@@ -70,4 +96,10 @@ fun Frame.Text.hasCommands(): Boolean{
     if(readText().startsWith("/"))
         return true
     return false
+}
+
+sealed class MessageType{
+    class Whisper(val message: String, val receiver: String):MessageType()
+    class Info(val message: String): MessageType()
+    class CommonMessage(val message:String): MessageType()
 }
