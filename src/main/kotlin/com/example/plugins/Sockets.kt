@@ -9,6 +9,10 @@ import java.time.Duration
 import java.util.*
 import kotlin.collections.LinkedHashSet
 
+object WebSocketsConnections{
+    val chat = Collections.synchronizedSet<Connection?>(LinkedHashSet())
+}
+
 fun Application.configureSockets() {
     install(WebSockets) {
         pingPeriod = Duration.ofSeconds(60)
@@ -17,13 +21,13 @@ fun Application.configureSockets() {
         masking = false
     }
     routing {
-        val connections = Collections.synchronizedSet<Connection?>(LinkedHashSet())
+
         webSocket("/chat") {
             println("Adding User!")
             val thisConnection = Connection(this)
-            connections += thisConnection
+            WebSocketsConnections.chat += thisConnection
             try{
-                send("You are connected! There are ${connections.count()} users here.")
+                send("You are connected! There are ${WebSocketsConnections.chat.count()} users here.")
                 send("Use /commands to see all the commands")
 
                 for (frame in incoming){
@@ -38,12 +42,12 @@ fun Application.configureSockets() {
                     when(type){
                         is MessageType.Info -> send(type.message)
                         is MessageType.CommonMessage -> {
-                            connections.forEach {
+                            WebSocketsConnections.chat.forEach {
                                 it.session.send("[${thisConnection.name}]: ${type.message}")
                             }
                         }
                         is MessageType.Whisper -> {
-                            val receiver = connections.find {
+                            val receiver = WebSocketsConnections.chat.find {
                                 it.name == type.receiver
                             }
                             receiver?.session?.send("[Whisper - ${thisConnection.name}]: ${type.message}")
@@ -55,7 +59,7 @@ fun Application.configureSockets() {
                 println(e.localizedMessage)
             }finally {
                 println("Removing $thisConnection!")
-                connections -= connections
+                WebSocketsConnections.chat -= WebSocketsConnections.chat
             }
         }
     }
